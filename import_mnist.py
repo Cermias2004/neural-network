@@ -1,13 +1,63 @@
 import struct
 import gzip
-from pathlib import Path
 import urllib.request
 import os
+import random
+import math
+
+class NeuralNetwork:
+    def __init__(self, layer_sizes):
+        self.weights = []
+        self.biases = []
+
+        for layer in range(len(layer_sizes) - 1):
+            input_size = layer_sizes[layer]
+            output_size = layer_sizes[layer + 1]
+
+            self.weights.append(weight_init(input_size, output_size))
+            self.biases.append(bias_init(output_size))
+
+
+    def forward_pass(self, input_data):
+        layers = len(self.weights)
+        current_input = input_data
+        for layer_idx in range(layers):
+            z = self.weight_input_bias_calc(
+                self.weights[layer_idx],
+                current_input,
+                self.biases[layer_idx]
+            )
+
+            if layer_idx == layers - 1:
+                current_input = self.softmax(z)
+            else:
+                current_input = self.relu(z)
+        return current_input
+
+    def relu(self, output_vector):
+        return [max(0, x) for x in output_vector]
+
+    def softmax(self, output_vector):
+        exp_values = [math.exp(x - max(output_vector)) for x in output_vector]
+        return [x /sum(exp_values) for x in exp_values]
+
+    def weight_input_bias_calc(self, weights, inputs, bias):
+        wib_output = []
+        for neuron_idx in range(len(weights)):
+            neuron_sum = 0
+            for input_idx in range(len(inputs)):
+                neuron_sum += weights[neuron_idx][input_idx] * inputs[input_idx]
+            wib_output.append(neuron_sum + bias[neuron_idx])
+        return wib_output
+
+def weight_init(input_size, output_size):
+    return [[random.uniform(-0.5, 0.5) for _ in range(input_size)] for _ in range(output_size)]
+
+def bias_init(output_size):
+    return [random.uniform(-1, 1) for _ in range(output_size)]
+
 
 def download_mnist():
-    import urllib.request
-    from pathlib import Path
-
     base_url = "https://storage.googleapis.com/tensorflow/tf-keras-datasets/"
     files = [
         "train-images-idx3-ubyte.gz",
@@ -66,8 +116,8 @@ def one_hot_encode(labels, num_classes=10):
     one_hot = []
 
     for label in labels:
-        encoded = [0.0] * 10
-        encoded[label] = 1.0
+        encoded = [0] * num_classes
+        encoded[label] = 1
         one_hot.append(encoded)
 
     return one_hot
@@ -87,13 +137,9 @@ def load_mnist():
     return x_train, y_train, x_test, y_test
 
 if __name__ == "__main__":
+
+    network = NeuralNetwork([784, 128, 64, 10])
+
     x_train, y_train, x_test, y_test = load_mnist()
-    print(f"Training images: {len(x_train)}")
-    print(f"Pixels per image: {len(x_train[0])}")
-    print(f"Training labels: {len(y_train)}")
-    print(f"Classes per label: {len(y_train[0])}")
-    print(f"Test images: {len(x_test)}")
-    print(f"Test labels: {len(y_test)}")
-    print(f"First image (first 10 pixels): {x_train[0][:10]}")
-    print(f"First label: {y_train[0]}")
-    print(x_train)
+    print(f"random probs: {network.forward_pass(x_train[0])}")
+
