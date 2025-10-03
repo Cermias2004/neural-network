@@ -6,9 +6,15 @@ import random
 import math
 
 class NeuralNetwork:
-    def __init__(self, layer_sizes):
+    def __init__(self, layer_sizes, learning_rate=0.1, dropout_rate=0.2):
+        self.errors = []
+        self.loss = []
+        self.current_inputs = []
         self.weights = []
         self.biases = []
+        self.gradients = []
+        self.dropout_rate = dropout_rate
+        self.learning_rate = learning_rate
 
         for layer in range(len(layer_sizes) - 1):
             input_size = layer_sizes[layer]
@@ -17,22 +23,110 @@ class NeuralNetwork:
             self.weights.append(weight_init(input_size, output_size))
             self.biases.append(bias_init(output_size))
 
+    def predict(self, inputs):
+        self.forward_pass(inputs)
+        return self.current_inputs[-1].index(max(self.current_inputs[-1]))
 
-    def forward_pass(self, input_data):
+    def get_weights(self):
+        return self.weights
+
+    def get_gradients(self):
+        return self.gradients
+
+    def get_errors(self):
+        return self.errors
+
+    def get_inputs(self):
+        return self.current_inputs
+
+    def get_biases(self):
+        return self.biases
+
+    def get_learning_rate(self):
+        return self.learning_rate
+
+    def set_learning_rate(self, lr):
+        self.learning_rate = lr
+
+    def get_loss(self):
+        return self.loss
+
+    def avg_loss(self):
+        return sum(self.loss) / len(self.loss)
+
+    def dropout(self, vector, drop_prob):
+        if drop_prob<=0.0:
+            return vector
+        mask = [0 if random.random() <= drop_prob else 1 for _ in vector]
+        return [v*m / (1-drop_prob) for v,m in zip(vector,mask)]
+
+    def back_prop(self, one_hot):
+        self.calc_error(one_hot)
+        self.gradient()
+        self.update_weights()
+        self.update_biases()
+
+    def update_weights(self):
+        for layer in range(len(self.weights)):
+            for i in range(len(self.weights[layer])):
+                for j in range(len(self.weights[layer][i])):
+                    self.weights[layer][i][j] -= self.learning_rate * self.gradients[(len(self.weights) - 1) - layer][i][j]
+
+    def update_biases(self):
+        for layer in range(len(self.biases)):
+            for i in range(len(self.biases[layer])):
+                self.biases[layer][i] -= self.learning_rate * self.errors[layer + 1][i]
+
+    def gradient(self):
+        self.gradients = []
+        for layer in range(len(self.errors) - 1, -1, -1):
+            layer_grads = []
+            for neuron in range(len(self.errors[layer])):
+                neuron_grads = []
+                for input in range(len(self.current_inputs[layer - 1])):
+                    neuron_grads.append(self.errors[layer][neuron] * self.current_inputs[layer - 1][input])
+                layer_grads.append(neuron_grads)
+            self.gradients.append(layer_grads)
+
+    def calc_error(self, one_hot):
+        layers = len(self.current_inputs) - 1
+        self.errors = [None] * (layers + 1)
+
+        self.errors[layers] = [
+            self.current_inputs[layers][i] - one_hot[i] for i in range(len(self.current_inputs[layers]))
+        ]
+
+        self.loss.append(-math.log(sum(self.current_inputs[layers][i] * one_hot[i] for i in range(len(self.current_inputs[layers]))) + 1e-15))
+
+        for layer_idx in range(layers - 1, -1, -1):
+            prev_weight = self.weights[layer_idx]
+            prev_error = self.errors[layer_idx + 1]
+            new_error = []
+            for j in range(len(self.current_inputs[layer_idx])):
+                weighted_sum = sum(prev_weight[k][j] * prev_error[k] for k in range(len(prev_error)))
+                new_error.append(weighted_sum * self.relu_derivative(self.current_inputs[layer_idx][j]))
+            self.errors[layer_idx] = new_error
+
+    def forward_pass(self, input_data, train=True):
         layers = len(self.weights)
-        current_input = input_data
+        self.current_inputs = [input_data]
         for layer_idx in range(layers):
             z = self.weight_input_bias_calc(
                 self.weights[layer_idx],
-                current_input,
+                self.current_inputs[layer_idx],
                 self.biases[layer_idx]
             )
 
             if layer_idx == layers - 1:
-                current_input = self.softmax(z)
+                self.current_inputs.append(self.softmax(z))
             else:
-                current_input = self.relu(z)
-        return current_input
+                activated = self.relu(z)
+                if train:
+                    activated = self.dropout(activated, self.dropout_rate)
+                self.current_inputs.append(activated)
+
+    def relu_derivative(self, x):
+        return 1 if x > 0 else 0
 
     def relu(self, output_vector):
         return [max(0, x) for x in output_vector]
@@ -51,10 +145,12 @@ class NeuralNetwork:
         return wib_output
 
 def weight_init(input_size, output_size):
-    return [[random.uniform(-0.5, 0.5) for _ in range(input_size)] for _ in range(output_size)]
+    limit = math.sqrt(2 / input_size)
+    return [[random.uniform(-limit, limit) for _ in range(input_size)] for _ in range(output_size)]
+
 
 def bias_init(output_size):
-    return [random.uniform(-1, 1) for _ in range(output_size)]
+    return [0.1 for _ in range(output_size)]
 
 
 def download_mnist():
@@ -141,5 +237,28 @@ if __name__ == "__main__":
     network = NeuralNetwork([784, 128, 64, 10])
 
     x_train, y_train, x_test, y_test = load_mnist()
-    print(f"random probs: {network.forward_pass(x_train[0])}")
 
+    batch_size = 32
+    epochs = 5
+
+    for epoch in range(epochs):
+        combine = list(zip(x_train, y_train))
+        random.shuffle(combine)
+        x_train, y_train = zip(*combine)
+
+        for i in range(0, len(x_train), batch_size):
+            x_batch = x_train[i:i+batch_size]
+            y_batch = y_train[i:i+batch_size]
+
+            for x,y in zip(x_batch,y_batch):
+                network.forward_pass(x)
+                network.back_prop(y)
+
+        correct = 0
+        for x,y in zip(x_test, y_test):
+            pred = network.predict(x)
+            if y[pred] == 1:
+                correct += 1
+        acc = correct / len(x_test)
+
+        print(f"Epoch {epoch+1}/{epochs} - Loss: {network.avg_loss():.4f} - Accuracy: {acc:.4f}")
