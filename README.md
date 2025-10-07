@@ -68,21 +68,24 @@ $$
 
 #### Activation Functions:
 
-* **ReLU (Hidden Layers)**
-  $$
-  a^{(l)} = \text{ReLU}(z^{(l)}) = \max(0, z^{(l)})
-  $$
+* **ReLU (Hidden Layers)**:
 
-* **Softmax (Output Layer)**
-  $$
-  \hat{y}_i = \frac{e^{z_i}}{\sum_j e^{z_j}}
-  $$
+$$
+a^{(l)} = \text{ReLU}(z^{(l)}) = \max(0, z^{(l)})
+$$
+
+* **Softmax (Output Layer)**:
+
+$$
+\hat{y}_i = \frac{e^{z_i}}{\sum_j e^{z_j}}
+$$
 
 #### Dropout Regularization:
 
 $$
 a^{(l)} = \frac{m^{(l)} \odot a^{(l)}}{1 - p}
 $$
+
 where ( $m^{(l)}$ ) is a binary mask sampled from $(\text{Bernoulli}(1-p))$ and $( p )$ is the dropout rate.
 
 ---
@@ -90,6 +93,7 @@ where ( $m^{(l)}$ ) is a binary mask sampled from $(\text{Bernoulli}(1-p))$ and 
 ### 2. Loss Function
 
 **Cross-Entropy Loss:**
+
 $$
 L = -\sum_{i=1}^{C} y_i \log(\hat{y}_i)
 $$
@@ -101,6 +105,7 @@ where:
 * $( \hat{y}_i )$: predicted probability from the Softmax layer
 
 The network tracks average loss per epoch:
+
 $$
 \text{AvgLoss} = \frac{1}{N} \sum_{n=1}^{N} L_n
 $$
@@ -110,15 +115,19 @@ $$
 ### 3. Backpropagation
 
 For output layer error:
+
 $$
 \delta^{(L)} = \hat{y} - y
 $$
 
 For hidden layers (using ReLU derivative):
+
 $$
 \delta^{(l)} = (W^{(l+1)})^T \delta^{(l+1)} \odot \text{ReLU}'(a^{(l)})
 $$
+
 where:
+
 $$
 \text{ReLU}'(x) =
 \begin{cases}
@@ -132,6 +141,7 @@ $$
 $$
 \nabla W^{(l)} = \delta^{(l)} (a^{(l-1)})^T
 $$
+
 $$
 \nabla b^{(l)} = \delta^{(l)}
 $$
@@ -145,6 +155,7 @@ Using batch gradient descent:
 $$
 W^{(l)} := W^{(l)} - \eta \cdot \frac{1}{m} \sum_{i=1}^{m} \nabla W^{(l)}*i
 $$
+
 $$
 b^{(l)} := b^{(l)} - \eta \cdot \frac{1}{m} \sum*{i=1}^{m} \nabla b^{(l)}_i
 $$
@@ -159,9 +170,11 @@ where:
 ### 5. Weight Initialization
 
 **He Initialization:**
+
 $$
 W^{(l)} \sim U\left(-\sqrt{\frac{2}{n_{\text{in}}}}, \sqrt{\frac{2}{n_{\text{in}}}}\right)
 $$
+
 This helps stabilize gradients in ReLU networks.
 
 
