@@ -26,7 +26,7 @@ class NeuralNetwork:
             self.biases.append(bias_init(output_size))
 
     def predict(self, inputs):
-        self.forward_pass(inputs)
+        self.forward_pass(inputs, train=False)
         return self.current_inputs[-1].index(max(self.current_inputs[-1]))
 
     def get_weights(self):
@@ -59,8 +59,8 @@ class NeuralNetwork:
     def dropout(self, vector, drop_prob):
         if drop_prob<=0.0:
             return vector
-        mask = [0 if random.random() <= drop_prob else 1 for _ in vector]
-        return [v*m / (1-drop_prob) for v,m in zip(vector,mask)]
+        scale = 1 / (1-drop_prob)
+        return [v * scale if random.random() > drop_prob else 0 for v in vector]
 
     def back_prop(self, one_hot):
         self.calc_error(one_hot)
@@ -68,7 +68,9 @@ class NeuralNetwork:
 
     def accumulate_gradients(self):
         if not self.batch_gradients:
-            self.batch_gradients = [[[0 for _ in neuron] for neuron in layer] for layer in self.weights]
+            self.batch_gradients = [[[0] * len(self.weights[l][n])
+                                    for n in range(len(self.weights[l]))]
+                                    for l in range(len(self.weights))]
 
         for layer in range(len(self.gradients)):
             for i in range(len(self.gradients[layer])):
@@ -76,10 +78,11 @@ class NeuralNetwork:
                     self.batch_gradients[layer][i][j] += self.gradients[layer][i][j]
 
     def avg_gradients(self, batch_size):
+        inv_batch = 1.0 / batch_size
         for layer in range(len(self.batch_gradients)):
             for i in range(len(self.batch_gradients[layer])):
                 for j in range(len(self.batch_gradients[layer][i])):
-                    self.batch_gradients[layer][i][j] /= batch_size
+                    self.batch_gradients[layer][i][j] *= inv_batch
 
     def update_weights(self):
         for layer in range(len(self.weights)):
@@ -90,16 +93,19 @@ class NeuralNetwork:
 
     def accumulate_bias_gradients(self):
         if not self.batch_biases:
-            self.batch_biases[:] = [[0 for _ in bias_layer] for bias_layer in self.biases]
+            self.batch_biases[:] = [[0] * len(bias_layer) for bias_layer in self.biases]
 
         for layer in range(len(self.errors) - 1):
-            for i in range(len(self.errors[layer + 1])):
-                self.batch_biases[layer][i] += self.errors[layer + 1][i]
+            error_layer = self.errors[layer + 1]
+            bias_layer = self.batch_biases[layer]
+            for i in range(len(error_layer)):
+                bias_layer[i] += error_layer[i]
 
     def avg_bias_gradients(self, batch_size):
+        inv_batch = 1.0 / batch_size
         for layer in range(len(self.errors) - 1):
             for i in range(len(self.errors[layer + 1])):
-                self.batch_biases[layer][i] /= batch_size
+                self.batch_biases[layer][i] *= inv_batch
 
     def update_biases(self):
         for layer in range(len(self.biases)):
@@ -110,11 +116,13 @@ class NeuralNetwork:
     def gradient(self):
         self.gradients = []
         for layer in range(1, len(self.errors)):
+            layer_errors = self.errors[layer]
+            layer_inputs = self.current_inputs[layer - 1]
             layer_grads = []
-            for neuron in range(len(self.errors[layer])):
-                neuron_grads = []
-                for input in range(len(self.current_inputs[layer - 1])):
-                    neuron_grads.append(self.errors[layer][neuron] * self.current_inputs[layer - 1][input])
+
+            for neuron in range(len(layer_errors)):
+                error = layer_errors[neuron]
+                neuron_grads = [error * inp for inp in layer_inputs]
                 layer_grads.append(neuron_grads)
             self.gradients.append(layer_grads)
 
@@ -122,24 +130,27 @@ class NeuralNetwork:
         layers = len(self.current_inputs) - 1
         self.errors = [None] * (layers + 1)
 
-        self.errors[layers] = [
-            self.current_inputs[layers][i] - one_hot[i] for i in range(len(self.current_inputs[layers]))
-        ]
+        output = self.current_inputs[layers]
+        self.errors[layers] = [output[i] - one_hot[i] for i in range(len(output))]
 
-        self.loss.append(-math.log(sum(self.current_inputs[layers][i] * one_hot[i] for i in range(len(self.current_inputs[layers]))) + 1e-15))
+        prob = sum(o * y for o, y in zip(output, one_hot)) + 1e-15
+        self.loss.append(-math.log(prob))
 
         for layer_idx in range(layers - 1, -1, -1):
             next_weight = self.weights[layer_idx]
             next_error = self.errors[layer_idx + 1]
+            curr_input = self.current_inputs[layer_idx]
+
             new_error = []
-            for j in range(len(self.current_inputs[layer_idx])):
+            for j in range(len(curr_input)):
                 weighted_sum = sum(next_weight[k][j] * next_error[k] for k in range(len(next_error)))
-                new_error.append(weighted_sum * self.relu_derivative(self.current_inputs[layer_idx][j]))
+                new_error.append(weighted_sum * (1 if curr_input[j] > 0 else 0)) #reLu_derivative
             self.errors[layer_idx] = new_error
 
     def forward_pass(self, input_data, train=True):
         layers = len(self.weights)
         self.current_inputs = [input_data]
+
         for layer_idx in range(layers):
             z = self.weight_input_bias_calc(
                 self.weights[layer_idx],
@@ -150,8 +161,8 @@ class NeuralNetwork:
             if layer_idx == layers - 1:
                 self.current_inputs.append(self.softmax(z))
             else:
-                activated = self.relu(z)
-                if train:
+                activated = [max(0, x) for x in z] #reLu
+                if train and self.dropout_rate > 0:
                     activated = self.dropout(activated, self.dropout_rate)
                 self.current_inputs.append(activated)
 
@@ -162,15 +173,16 @@ class NeuralNetwork:
         return [max(0, x) for x in output_vector]
 
     def softmax(self, output_vector):
-        exp_values = [math.exp(x - max(output_vector)) for x in output_vector]
-        return [x /sum(exp_values) for x in exp_values]
+        max_val = max(output_vector)
+        exp_values = [math.exp(x - max_val) for x in output_vector]
+        sum_exp = sum(exp_values)
+        return [x /sum_exp for x in exp_values]
 
     def weight_input_bias_calc(self, weights, inputs, bias):
         wib_output = []
         for neuron_idx in range(len(weights)):
-            neuron_sum = 0
-            for input_idx in range(len(inputs)):
-                neuron_sum += weights[neuron_idx][input_idx] * inputs[input_idx]
+            neuron_weights = weights[neuron_idx]
+            neuron_sum = sum(w * i for w, i in zip(neuron_weights, inputs))
             wib_output.append(neuron_sum + bias[neuron_idx])
         return wib_output
 
@@ -216,13 +228,15 @@ def load_mnist_images(filepath):
         image_bytes = f.read()
 
         images = []
-        pixels_per_image = rows*cols
+        pixels_per_image = rows * cols
+
+        norm_factor = 1.0 / 255.0
 
         for i in range(num_images):
             start_idx = i * pixels_per_image
             end_idx = start_idx + pixels_per_image
 
-            image_pixels = [byte / 255.0 for byte in image_bytes[start_idx:end_idx]]
+            image_pixels = [image_bytes[j] * norm_factor for j in range(start_idx, end_idx)]
             images.append(image_pixels)
 
         return images
@@ -231,21 +245,15 @@ def load_mnist_labels(filepath):
     with gzip.open(filepath, 'rb') as f:
         magic, num_labels = struct.unpack('>II', f.read(8))
 
-        labels = []
         label_bytes = f.read()
-
-        for label in range(num_labels):
-            labels.append(label_bytes[label])
-        return labels
+        return list(label_bytes)
 
 def one_hot_encode(labels, num_classes=10):
     one_hot = []
-
     for label in labels:
         encoded = [0] * num_classes
         encoded[label] = 1
         one_hot.append(encoded)
-
     return one_hot
 
 def load_mnist():
@@ -264,7 +272,7 @@ def load_mnist():
 
 if __name__ == "__main__":
 
-    network = NeuralNetwork([784, 128, 64, 10])
+    network = NeuralNetwork([784, 128, 64, 10], learning_rate=0.1, dropout_rate=0.2)
 
     x_train, y_train, x_test, y_test = load_mnist()
 
@@ -276,24 +284,26 @@ if __name__ == "__main__":
     batch_size = 32
     epochs = 5
 
+    import time
+    start_time = time.time()
+
     for epoch in range(epochs):
         network.loss = []
 
-        combine = list(zip(x_train, y_train))
-        random.shuffle(combine)
-        x_train, y_train = zip(*combine)
+        indices = list(range(len(x_train)))
+        random.shuffle(indices)
 
         for i in range(0, len(x_train), batch_size):
-            x_batch = x_train[i:i+batch_size]
-            y_batch = y_train[i:i+batch_size]
+            batch_indices = indices[i:i+batch_size]
 
-            for x,y in zip(x_batch,y_batch):
-                network.forward_pass(x)
-                network.back_prop(y)
+            for idx in batch_indices:
+                network.forward_pass(x_train[idx])
+                network.back_prop(y_train[idx])
                 network.accumulate_gradients()
                 network.accumulate_bias_gradients()
-            network.avg_gradients(batch_size)
-            network.avg_bias_gradients(batch_size)
+
+            network.avg_gradients(len(batch_indices))
+            network.avg_bias_gradients(len(batch_indices))
             network.update_weights()
             network.update_biases()
 
@@ -305,3 +315,5 @@ if __name__ == "__main__":
         acc = correct / len(x_test)
 
         print(f"Epoch {epoch+1}/{epochs} - Loss: {network.avg_loss():.4f} - Accuracy: {acc:.4f}")
+
+    print(f"Total training time: {time.time() - start_time:.2f} seconds")
