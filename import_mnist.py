@@ -7,12 +7,14 @@ import math
 
 class NeuralNetwork:
     def __init__(self, layer_sizes, learning_rate=0.1, dropout_rate=0.2):
+        self.batch_gradients = []
+        self.batch_biases = []
         self.errors = []
         self.loss = []
         self.current_inputs = []
         self.weights = []
-        self.biases = []
         self.gradients = []
+        self.biases = []
         self.dropout_rate = dropout_rate
         self.learning_rate = learning_rate
 
@@ -63,23 +65,51 @@ class NeuralNetwork:
     def back_prop(self, one_hot):
         self.calc_error(one_hot)
         self.gradient()
-        self.update_weights()
-        self.update_biases()
+
+    def accumulate_gradients(self):
+        if not self.batch_gradients:
+            self.batch_gradients = [[[0 for _ in neuron] for neuron in layer] for layer in self.weights]
+
+        for layer in range(len(self.gradients)):
+            for i in range(len(self.gradients[layer])):
+                for j in range(len(self.gradients[layer][i])):
+                    self.batch_gradients[layer][i][j] += self.gradients[layer][i][j]
+
+    def avg_gradients(self, batch_size):
+        for layer in range(len(self.batch_gradients)):
+            for i in range(len(self.batch_gradients[layer])):
+                for j in range(len(self.batch_gradients[layer][i])):
+                    self.batch_gradients[layer][i][j] /= batch_size
 
     def update_weights(self):
         for layer in range(len(self.weights)):
             for i in range(len(self.weights[layer])):
                 for j in range(len(self.weights[layer][i])):
-                    self.weights[layer][i][j] -= self.learning_rate * self.gradients[(len(self.weights) - 1) - layer][i][j]
+                    self.weights[layer][i][j] -= self.learning_rate * self.batch_gradients[layer][i][j]
+        self.batch_gradients = []
+
+    def accumulate_bias_gradients(self):
+        if not self.batch_biases:
+            self.batch_biases[:] = [[0 for _ in bias_layer] for bias_layer in self.biases]
+
+        for layer in range(len(self.errors) - 1):
+            for i in range(len(self.errors[layer + 1])):
+                self.batch_biases[layer][i] += self.errors[layer + 1][i]
+
+    def avg_bias_gradients(self, batch_size):
+        for layer in range(len(self.errors) - 1):
+            for i in range(len(self.errors[layer + 1])):
+                self.batch_biases[layer][i] /= batch_size
 
     def update_biases(self):
         for layer in range(len(self.biases)):
             for i in range(len(self.biases[layer])):
-                self.biases[layer][i] -= self.learning_rate * self.errors[layer + 1][i]
+                self.biases[layer][i] -= self.learning_rate * self.batch_biases[layer][i]
+        self.batch_biases = []
 
     def gradient(self):
         self.gradients = []
-        for layer in range(len(self.errors) - 1, -1, -1):
+        for layer in range(1, len(self.errors)):
             layer_grads = []
             for neuron in range(len(self.errors[layer])):
                 neuron_grads = []
@@ -99,11 +129,11 @@ class NeuralNetwork:
         self.loss.append(-math.log(sum(self.current_inputs[layers][i] * one_hot[i] for i in range(len(self.current_inputs[layers]))) + 1e-15))
 
         for layer_idx in range(layers - 1, -1, -1):
-            prev_weight = self.weights[layer_idx]
-            prev_error = self.errors[layer_idx + 1]
+            next_weight = self.weights[layer_idx]
+            next_error = self.errors[layer_idx + 1]
             new_error = []
             for j in range(len(self.current_inputs[layer_idx])):
-                weighted_sum = sum(prev_weight[k][j] * prev_error[k] for k in range(len(prev_error)))
+                weighted_sum = sum(next_weight[k][j] * next_error[k] for k in range(len(next_error)))
                 new_error.append(weighted_sum * self.relu_derivative(self.current_inputs[layer_idx][j]))
             self.errors[layer_idx] = new_error
 
@@ -238,10 +268,17 @@ if __name__ == "__main__":
 
     x_train, y_train, x_test, y_test = load_mnist()
 
+    #x_train = x_train[0:3200]
+    #y_train = y_train[0:3200]
+    #x_test = x_test[0:320]
+    #y_test = y_test[0:320]
+
     batch_size = 32
     epochs = 5
 
     for epoch in range(epochs):
+        network.loss = []
+
         combine = list(zip(x_train, y_train))
         random.shuffle(combine)
         x_train, y_train = zip(*combine)
@@ -253,6 +290,12 @@ if __name__ == "__main__":
             for x,y in zip(x_batch,y_batch):
                 network.forward_pass(x)
                 network.back_prop(y)
+                network.accumulate_gradients()
+                network.accumulate_bias_gradients()
+            network.avg_gradients(batch_size)
+            network.avg_bias_gradients(batch_size)
+            network.update_weights()
+            network.update_biases()
 
         correct = 0
         for x,y in zip(x_test, y_test):
